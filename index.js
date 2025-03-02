@@ -3,7 +3,7 @@ import WebSocket from "ws";
 import dotenv from "dotenv";
 import fastifyFormBody from "@fastify/formbody";
 import fastifyWs from "@fastify/websocket";
-import Twilio from 'twilio';
+import Twilio from "twilio";
 
 // Load environment variables from .env file
 dotenv.config();
@@ -16,10 +16,13 @@ if (!OPENAI_API_KEY) {
   process.exit(1);
 }
 
-const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER } = process.env;
+const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER } =
+  process.env;
 
 if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_PHONE_NUMBER) {
-  console.error("Credenciais do Twilio ausentes. Configure TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN e TWILIO_PHONE_NUMBER no arquivo .env");
+  console.error(
+    "Credenciais do Twilio ausentes. Configure TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN e TWILIO_PHONE_NUMBER no arquivo .env"
+  );
   process.exit(1);
 }
 
@@ -30,13 +33,36 @@ fastify.register(fastifyWs);
 
 const twilioClient = new Twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
-// Constants
-const SYSTEM_MESSAGE =
-  "You are a helpful and bubbly AI assistant who loves to chat about anything the user is interested about and is prepared to offer them facts. You have a penchant for dad jokes, owl jokes, and rickrolling – subtly. Always stay positive, but work in a joke when appropriate.";
-const VOICE = "alloy";
+// Model configuration and system instructions
+const MODEL_CONFIG = {
+  model: "gpt-4o-mini-realtime-preview-2024-12-17",
+  voice: "shimmer",
+  temperature: 0.78,
+  max_response_output_tokens: 500,
+  turn_detection: {
+    type: "server_vad",
+    threshold: 0.43,
+    prefix_padding_ms: 400,
+    silence_duration_ms: 540,
+  },
+};
+
+// Updated system instructions
+const SYSTEM_INSTRUCTIONS = `Your main goal is to consistently lead users to schedule a meeting with a consultant. Always aim to persuade them to book a time, even in general replies. Speak with a São Paulo business district accent, specifically from the Faria Lima area.
+ # Details
+ - Position yourself as Carol from Estratégia Investimentos
+ - You are conducting cold calls
+ - The meeting should be scheduled for next week
+ # Tone and Speech
+ - Speak at a fast pace to maintain engagement.
+ - Use a persuasive and confident tone of voice paulista
+ - Be emotionally engaging and friendly
+ - Use a São Paulo business district accent, specifically from the Faria Lima area
+ - Project enthusiasm and conviction in your voice`;
+
 const PORT = process.env.PORT || 5050; // Allow dynamic port assignment
 
-// List of Event Types to log to the console. See the OpenAI Realtime API Documentation: https://platform.openai.com/docs/api-reference/realtime
+// List of Event Types to log to the console
 const LOG_EVENT_TYPES = [
   "error",
   "response.content.done",
@@ -57,13 +83,11 @@ fastify.get("/", async (request, reply) => {
 });
 
 // Route for Twilio to handle incoming calls
-// <Say> punctuation to improve text-to-speech translation
 fastify.all("/incoming-call", async (request, reply) => {
   const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
                           <Response>
-                              <Say>Please wait while we connect your call to the A. I. voice assistant, powered by Twilio and the Open-A.I. Realtime API</Say>
+                              <Say>Por favor, aguarde enquanto conectamos sua chamada com Carol da Estratégia Investimentos</Say>
                               <Pause length="1"/>
-                              <Say>O.K. you can start talking!</Say>
                               <Connect>
                                   <Stream url="wss://${request.headers.host}/media-stream" />
                               </Connect>
@@ -73,47 +97,49 @@ fastify.all("/incoming-call", async (request, reply) => {
 });
 
 // Rota para iniciar chamadas de saída
-fastify.post('/make-call', async (request, reply) => {
+fastify.post("/make-call", async (request, reply) => {
   try {
     const { to, message } = request.body;
-    
+
     if (!to) {
-      return reply.status(400).send({ error: 'Número de telefone de destino (to) é obrigatório' });
+      return reply
+        .status(400)
+        .send({ error: "Número de telefone de destino (to) é obrigatório" });
     }
 
     // URL de callback para quando a chamada for atendida
     const callbackUrl = `https://${request.headers.host}/outbound-call-handler`;
 
     // Crie um objeto TwiML para a chamada de saída
-    const initialMessage = message || 'Conectando você a um assistente de IA';
-    
+    const initialMessage =
+      message || "Olá, aqui é a Carol da Estratégia Investimentos";
+
     // Inicie a chamada
     const call = await twilioClient.calls.create({
-      to: to,                                   // Número para chamar
-      from: TWILIO_PHONE_NUMBER,                // Seu número do Twilio
+      to: to, // Número para chamar
+      from: TWILIO_PHONE_NUMBER, // Seu número do Twilio
       twiml: `<?xml version="1.0" encoding="UTF-8"?>
               <Response>
                 <Say>${initialMessage}</Say>
                 <Connect>
                   <Stream url="wss://${request.headers.host}/media-stream" />
                 </Connect>
-              </Response>`
+              </Response>`,
     });
 
-    return reply.send({ 
-      success: true, 
-      message: 'Chamada iniciada com sucesso',
-      callSid: call.sid 
+    return reply.send({
+      success: true,
+      message: "Chamada iniciada com sucesso",
+      callSid: call.sid,
     });
   } catch (error) {
-    console.error('Erro ao fazer chamada:', error);
-    return reply.status(500).send({ 
-      error: 'Falha ao iniciar chamada', 
-      details: error.message 
+    console.error("Erro ao fazer chamada:", error);
+    return reply.status(500).send({
+      error: "Falha ao iniciar chamada",
+      details: error.message,
     });
   }
 });
-
 
 // WebSocket route for media-stream
 fastify.register(async (fastify) => {
@@ -128,7 +154,7 @@ fastify.register(async (fastify) => {
     let responseStartTimestampTwilio = null;
 
     const openAiWs = new WebSocket(
-      "wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17",
+      `wss://api.openai.com/v1/realtime?model=${MODEL_CONFIG.model}`,
       {
         headers: {
           Authorization: `Bearer ${OPENAI_API_KEY}`,
@@ -142,21 +168,22 @@ fastify.register(async (fastify) => {
       const sessionUpdate = {
         type: "session.update",
         session: {
-          turn_detection: { type: "server_vad" },
+          turn_detection: MODEL_CONFIG.turn_detection,
           // Required for Twilio Media Streams
           input_audio_format: "g711_ulaw",
           output_audio_format: "g711_ulaw",
-          voice: VOICE,
-          instructions: SYSTEM_MESSAGE,
+          voice: MODEL_CONFIG.voice,
+          instructions: SYSTEM_INSTRUCTIONS,
           modalities: ["text", "audio"],
-          temperature: 0.8,
+          temperature: MODEL_CONFIG.temperature,
+          max_response_output_tokens: MODEL_CONFIG.max_response_output_tokens,
         },
       };
 
       console.log("Sending session update:", JSON.stringify(sessionUpdate));
       openAiWs.send(JSON.stringify(sessionUpdate));
 
-      // Uncomment the following line to have AI speak first:
+      // Uncomment to have AI speak first (now enabled by default):
       // sendInitialConversationItem();
     };
 
@@ -170,7 +197,7 @@ fastify.register(async (fastify) => {
           content: [
             {
               type: "input_text",
-              text: 'Greet the user with "Hello there! I am an AI voice assistant powered by Twilio and the OpenAI Realtime API. You can ask me for facts, jokes, or anything you can imagine. How can I help you?"',
+              text: "Inicie uma ligação como Carol da Estratégia Investimentos fazendo uma chamada a frio para agendar uma reunião com um consultor na próxima semana.",
             },
           ],
         },
