@@ -3,6 +3,7 @@ import WebSocket from "ws";
 import dotenv from "dotenv";
 import fastifyFormBody from "@fastify/formbody";
 import fastifyWs from "@fastify/websocket";
+import Twilio from 'twilio';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -15,10 +16,19 @@ if (!OPENAI_API_KEY) {
   process.exit(1);
 }
 
+const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER } = process.env;
+
+if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_PHONE_NUMBER) {
+  console.error("Credenciais do Twilio ausentes. Configure TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN e TWILIO_PHONE_NUMBER no arquivo .env");
+  process.exit(1);
+}
+
 // Initialize Fastify
 const fastify = Fastify();
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
+
+const twilioClient = new Twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
 // Constants
 const SYSTEM_MESSAGE =
@@ -61,6 +71,49 @@ fastify.all("/incoming-call", async (request, reply) => {
 
   reply.type("text/xml").send(twimlResponse);
 });
+
+// Rota para iniciar chamadas de saída
+fastify.post('/make-call', async (request, reply) => {
+  try {
+    const { to, message } = request.body;
+    
+    if (!to) {
+      return reply.status(400).send({ error: 'Número de telefone de destino (to) é obrigatório' });
+    }
+
+    // URL de callback para quando a chamada for atendida
+    const callbackUrl = `https://${request.headers.host}/outbound-call-handler`;
+
+    // Crie um objeto TwiML para a chamada de saída
+    const initialMessage = message || 'Conectando você a um assistente de IA';
+    
+    // Inicie a chamada
+    const call = await twilioClient.calls.create({
+      to: to,                                   // Número para chamar
+      from: TWILIO_PHONE_NUMBER,                // Seu número do Twilio
+      twiml: `<?xml version="1.0" encoding="UTF-8"?>
+              <Response>
+                <Say>${initialMessage}</Say>
+                <Connect>
+                  <Stream url="wss://${request.headers.host}/media-stream" />
+                </Connect>
+              </Response>`
+    });
+
+    return reply.send({ 
+      success: true, 
+      message: 'Chamada iniciada com sucesso',
+      callSid: call.sid 
+    });
+  } catch (error) {
+    console.error('Erro ao fazer chamada:', error);
+    return reply.status(500).send({ 
+      error: 'Falha ao iniciar chamada', 
+      details: error.message 
+    });
+  }
+});
+
 
 // WebSocket route for media-stream
 fastify.register(async (fastify) => {
