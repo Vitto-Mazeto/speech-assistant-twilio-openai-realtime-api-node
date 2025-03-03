@@ -1,4 +1,8 @@
-import Fastify, { FastifyInstance } from "fastify";
+import Fastify, {
+  FastifyInstance,
+  FastifyRequest,
+  FastifyReply,
+} from "fastify";
 import WebSocket from "ws";
 import dotenv from "dotenv";
 import fastifyFormBody from "@fastify/formbody";
@@ -12,6 +16,10 @@ import {
   OpenAIIncomingMessage,
   MakeCallRequestBody,
 } from "./types";
+import fastifyStatic from "@fastify/static";
+import path from "path";
+import fs from "fs-extra";
+import axios from "axios";
 
 // Load environment variables from .env file
 dotenv.config();
@@ -45,6 +53,17 @@ if (
 const fastify: FastifyInstance = Fastify();
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
+
+const recordingsDir = path.join(__dirname, "../recordings");
+fs.ensureDirSync(recordingsDir);
+console.log(`Recordings will be saved to: ${recordingsDir}`);
+
+// Register static file server for recordings
+fastify.register(fastifyStatic, {
+  root: recordingsDir,
+  prefix: "/recordings/",
+  decorateReply: false,
+});
 
 // Initialize Twilio client
 const twilioClient = Twilio(env.TWILIO_ACCOUNT_SID!, env.TWILIO_AUTH_TOKEN!);
@@ -118,6 +137,7 @@ fastify.post<{
 }>("/make-call", async (request, reply) => {
   try {
     const { to, message } = request.body;
+    const host = request.headers.host;
 
     if (!to) {
       return reply
@@ -125,29 +145,27 @@ fastify.post<{
         .send({ error: "Número de telefone de destino (to) é obrigatório" });
     }
 
-    // URL de callback para quando a chamada for atendida
-    const callbackUrl = `https://${request.headers.host}/outbound-call-handler`;
-
-    // Crie um objeto TwiML para a chamada de saída
-    const initialMessage =
-      message || "Olá, aqui é a Carol da Estratégia Investimentos";
-
-    // Inicie a chamada
+    // Add recording for outbound calls
     const call = await twilioClient.calls.create({
-      to: to, // Número para chamar
-      from: env.TWILIO_PHONE_NUMBER!, // Seu número do Twilio
+      to: to,
+      from: env.TWILIO_PHONE_NUMBER!,
+      record: true, // Enable recording directly
+      recordingStatusCallback: `https://${host}/recording-completed`, // Use host from request
+      recordingStatusCallbackEvent: ["completed"],
       twiml: `<?xml version="1.0" encoding="UTF-8"?>
               <Response>
-                <Say>${initialMessage}</Say>
+                <Say>Esta chamada está sendo gravada. ${
+                  message || "Olá, aqui é a Carol da Estratégia Investimentos"
+                }</Say>
                 <Connect>
-                  <Stream url="wss://${request.headers.host}/media-stream" />
+                  <Stream url="wss://${host}/media-stream" />
                 </Connect>
               </Response>`,
     });
 
     return reply.send({
       success: true,
-      message: "Chamada iniciada com sucesso",
+      message: "Chamada iniciada com sucesso com gravação",
       callSid: call.sid,
     });
   } catch (error: any) {
@@ -158,6 +176,64 @@ fastify.post<{
     });
   }
 });
+
+// Add a route to handle recording completion callback
+fastify.all(
+  "/recording-completed",
+  async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      // Extract recording details from request body
+      const body = request.body as any;
+      console.log("Recording completed callback received:", body);
+
+      const recordingSid = body.RecordingSid;
+      const recordingUrl = body.RecordingUrl;
+      const callSid = body.CallSid;
+      const dateCreated = body.DateCreated || new Date().toISOString();
+
+      if (recordingUrl && recordingSid) {
+        // Download the recording
+        console.log(`Downloading recording: ${recordingUrl}`);
+
+        // Generate filename with date and call SID
+        const date = new Date(dateCreated).toISOString().replace(/[:.]/g, "-");
+        const filename = `${date}_${callSid}_${recordingSid}.wav`;
+        const filePath = path.join(recordingsDir, filename);
+
+        // Get the recording in WAV format
+        const recordingResponse = await axios({
+          method: "GET",
+          url: `${recordingUrl}.wav`,
+          auth: {
+            username: env.TWILIO_ACCOUNT_SID!,
+            password: env.TWILIO_AUTH_TOKEN!,
+          },
+          responseType: "stream",
+        });
+
+        // Save the recording
+        const writer = fs.createWriteStream(filePath);
+        recordingResponse.data.pipe(writer);
+
+        await new Promise<void>((resolve, reject) => {
+          writer.on("finish", () => resolve());
+          writer.on("error", (err) => reject(err));
+        });
+
+        console.log(`Recording saved to: ${filePath}`);
+      } else {
+        console.warn("Recording information incomplete:", body);
+      }
+
+      reply.send({ status: "success" });
+    } catch (error) {
+      console.error("Error processing recording:", error);
+      reply
+        .status(500)
+        .send({ status: "error", message: (error as Error).message });
+    }
+  }
+);
 
 // WebSocket route for media-stream
 fastify.register(async (fastify) => {
