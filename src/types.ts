@@ -75,6 +75,27 @@ export type TwilioEvent =
   | TwilioClearEvent
   | { event: string; [key: string]: any };
 
+// Function tool parameter
+export interface FunctionParameter {
+  type: string;
+  properties: {
+    [key: string]: {
+      type: string;
+      description: string;
+      enum?: string[];
+    };
+  };
+  required?: string[];
+}
+
+// Function tool
+export interface FunctionTool {
+  type: "function";
+  name: string;
+  description: string;
+  parameters: FunctionParameter;
+}
+
 // OpenAI Session Update Message
 export interface OpenAISessionUpdate {
   type: "session.update";
@@ -92,6 +113,8 @@ export interface OpenAISessionUpdate {
     modalities: string[];
     temperature: number;
     max_response_output_tokens: number;
+    tools?: FunctionTool[];
+    tool_choice?: string;
   };
 }
 
@@ -105,6 +128,16 @@ export interface OpenAIConversationItemCreate {
       type: string;
       text: string;
     }>;
+  };
+}
+
+// OpenAI Function Call Output Message
+export interface OpenAIFunctionCallOutput {
+  type: "conversation.item.create";
+  item: {
+    type: "function_call_output";
+    call_id: string;
+    output: string;
   };
 }
 
@@ -133,7 +166,8 @@ export type OpenAIOutgoingMessage =
   | OpenAIConversationItemCreate
   | OpenAIResponseCreate
   | OpenAIAudioAppend
-  | OpenAITruncate;
+  | OpenAITruncate
+  | OpenAIFunctionCallOutput;
 
 // OpenAI Audio Delta Message
 export interface OpenAIAudioDelta {
@@ -149,10 +183,51 @@ export interface OpenAISpeechEvent {
     | "input_audio_buffer.speech_stopped";
 }
 
+// Function call output item
+export interface OpenAIFunctionCallItem {
+  type: "function_call";
+  name: string;
+  call_id: string;
+  arguments: string;
+  object: string;
+  id: string;
+  status: string;
+}
+
+// Response done message
+export interface OpenAIResponseDone {
+  type: "response.done";
+  event_id: string;
+  response: {
+    object: string;
+    id: string;
+    status: string;
+    status_details: any;
+    output: OpenAIFunctionCallItem[];
+    usage: {
+      total_tokens: number;
+      input_tokens: number;
+      output_tokens: number;
+      input_token_details: {
+        text_tokens: number;
+        audio_tokens: number;
+        cached_tokens: number;
+        cached_tokens_details: { text_tokens: number; audio_tokens: number };
+      };
+      output_token_details: {
+        text_tokens: number;
+        audio_tokens: number;
+      };
+    };
+    metadata: any;
+  };
+}
+
 // Union type for all incoming OpenAI messages
 export type OpenAIIncomingMessage =
   | OpenAIAudioDelta
   | OpenAISpeechEvent
+  | OpenAIResponseDone
   | { type: string; [key: string]: any };
 
 // Connection state

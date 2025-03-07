@@ -1,89 +1,145 @@
-#  Speech Assistant with Twilio Voice and the OpenAI Realtime API (Node.js)
+# Agendador de Reuniões com Twilio Voice e OpenAI Realtime API (Node.js)
 
-This application demonstrates how to use Node.js, [Twilio Voice](https://www.twilio.com/docs/voice) and [Media Streams](https://www.twilio.com/docs/voice/media-streams), and [OpenAI's Realtime API](https://platform.openai.com/docs/) to make a phone call to speak with an AI Assistant. 
+Esta aplicação demonstra como usar Node.js, [Twilio Voice](https://www.twilio.com/docs/voice) com [Media Streams](https://www.twilio.com/docs/voice/media-streams) e a [OpenAI Realtime API](https://platform.openai.com/docs/) para criar um assistente de voz que faz chamadas telefônicas para agendar reuniões de consultoria financeira.
 
-The application opens websockets with the OpenAI Realtime API and Twilio, and sends voice audio from one to the other to enable a two-way conversation.
+A aplicação utiliza websockets com a OpenAI Realtime API e Twilio, transmitindo áudio de voz entre ambos para permitir uma conversa bidirecional, onde o assistente se apresenta como "Carol da Estratégia Investimentos".
 
-See [here](https://www.twilio.com/en-us/blog/voice-ai-assistant-openai-realtime-api-node) for a tutorial overview of the code.
-
-This application uses the following Twilio products in conjuction with OpenAI's Realtime API:
-- Voice (and TwiML, Media Streams)
+Esta aplicação utiliza os seguintes produtos Twilio em conjunto com a OpenAI Realtime API:
+- Voice (incluindo TwiML e Media Streams)
 - Phone Numbers
 
-> [!NOTE]
-> Outbound calling is beyond the scope of this app. However, we demoed [one way to do it here](https://www.twilio.com/en-us/blog/outbound-calls-node-openai-realtime-api-voice).
+## Funcionalidades Principais
 
-## Prerequisites
+- **Chamadas de entrada**: Recebe chamadas e conecta com a assistente virtual
+- **Chamadas de saída**: Inicia chamadas para potenciais clientes através de uma API
+- **Gravação de chamadas**: Armazena automaticamente todas as chamadas realizadas
+- **Agendamento de reuniões**: Coleta informações do cliente e armazena os detalhes do agendamento
+- **Interrupção inteligente**: Detecta quando o usuário começa a falar e interrompe a fala do assistente
 
-To use the app, you will  need:
+## Pré-requisitos
 
-- **Node.js 18+** We used \`18.20.4\` for development; download from [here](https://nodejs.org/).
-- **A Twilio account.** You can sign up for a free trial [here](https://www.twilio.com/try-twilio).
-- **A Twilio number with _Voice_ capabilities.** [Here are instructions](https://help.twilio.com/articles/223135247-How-to-Search-for-and-Buy-a-Twilio-Phone-Number-from-Console) to purchase a phone number.
-- **An OpenAI account and an OpenAI API Key.** You can sign up [here](https://platform.openai.com/).
-  - **OpenAI Realtime API access.**
+Para usar esta aplicação, você precisará:
 
-## Local Setup
+- **Node.js 18+**
+- **Uma conta Twilio.** Você pode se inscrever para um teste gratuito [aqui](https://www.twilio.com/try-twilio).
+- **Um número Twilio com capacidades de _Voice_.** [Aqui estão instruções](https://help.twilio.com/articles/223135247-How-to-Search-for-and-Buy-a-Twilio-Phone-Number-from-Console) para comprar um número de telefone.
+- **Uma conta OpenAI e uma chave de API OpenAI.** Você pode se inscrever [aqui](https://platform.openai.com/).
+  - **Acesso à OpenAI Realtime API**
 
-There are 4 required steps to get the app up-and-running locally for development and testing:
-1. Run ngrok or another tunneling solution to expose your local server to the internet for testing. Download ngrok [here](https://ngrok.com/).
-2. Install the packages
-3. Twilio setup
-4. Update the .env file
+## Configuração Local
 
-### Open an ngrok tunnel
-When developing & testing locally, you'll need to open a tunnel to forward requests to your local development server. These instructions use ngrok.
+Existem 4 passos necessários para colocar a aplicação em funcionamento localmente:
+1. Execute ngrok ou outra solução de tunelamento para expor seu servidor local à internet para testes
+2. Instale os pacotes
+3. Configure o Twilio
+4. Atualize o arquivo .env
 
-Open a Terminal and run:
+### Abra um túnel ngrok
+Ao desenvolver e testar localmente, você precisará abrir um túnel para encaminhar as solicitações para o seu servidor de desenvolvimento local.
+
+Abra um Terminal e execute:
 ```
 ngrok http 5050
 ```
-Once the tunnel has been opened, copy the `Forwarding` URL. It will look something like: `https://[your-ngrok-subdomain].ngrok.app`. You will
-need this when configuring your Twilio number setup.
+Depois que o túnel for aberto, copie a URL de `Forwarding`. Será algo como: `https://[seu-subdomínio-ngrok].ngrok.app`. Você precisará disso ao configurar seu número Twilio.
 
-Note that the `ngrok` command above forwards to a development server running on port `5050`, which is the default port configured in this application. If
-you override the `PORT` defined in `index.js`, you will need to update the `ngrok` command accordingly.
+### Instale os pacotes necessários
 
-Keep in mind that each time you run the `ngrok http` command, a new URL will be created, and you'll need to update it everywhere it is referenced below.
-
-### Install required packages
-
-Open a Terminal and run:
+Abra um Terminal e execute:
 ```
 npm install
 ```
 
-### Twilio setup
+### Configuração do Twilio
 
-#### Point a Phone Number to your ngrok URL
-In the [Twilio Console](https://console.twilio.com/), go to **Phone Numbers** > **Manage** > **Active Numbers** and click on the additional phone number you purchased for this app in the **Prerequisites**.
+#### Configure um Número de Telefone para seu URL ngrok
+No [Console do Twilio](https://console.twilio.com/), vá para **Phone Numbers** > **Manage** > **Active Numbers** e clique no número de telefone que você adquiriu para este aplicativo.
 
-In your Phone Number configuration settings, update the first **A call comes in** dropdown to **Webhook**, and paste your ngrok forwarding URL (referenced above), followed by `/incoming-call`. For example, `https://[your-ngrok-subdomain].ngrok.app/incoming-call`. Then, click **Save configuration**.
+Nas configurações do seu número de telefone, atualize o primeiro dropdown **A call comes in** para **Webhook**, e cole sua URL de encaminhamento ngrok, seguida por `/incoming-call`. Por exemplo, `https://[seu-subdomínio-ngrok].ngrok.app/incoming-call`. Em seguida, clique em **Save configuration**.
 
-### Update the .env file
+### Atualize o arquivo .env
 
-Create a `/env` file, or copy the `.env.example` file to `.env`:
+Crie um arquivo `.env` ou copie o arquivo `.env.example` para `.env`:
 
 ```
 cp .env.example .env
 ```
 
-In the .env file, update the `OPENAI_API_KEY` to your OpenAI API key from the **Prerequisites**.
+No arquivo .env, atualize as seguintes variáveis:
 
-## Run the app
-Once ngrok is running, dependencies are installed, Twilio is configured properly, and the `.env` is set up, run the dev server with the following command:
 ```
-node index.js
+OPENAI_API_KEY=sua-chave-api-openai
+TWILIO_ACCOUNT_SID=seu-account-sid-twilio
+TWILIO_AUTH_TOKEN=seu-auth-token-twilio
+TWILIO_PHONE_NUMBER=seu-numero-twilio
+PORT=5050 (opcional)
 ```
-## Test the app
-With the development server running, call the phone number you purchased in the **Prerequisites**. After the introduction, you should be able to talk to the AI Assistant. Have fun!
 
-## Special features
+## Estrutura de Diretórios
 
-### Have the AI speak first
-To have the AI voice assistant talk before the user, uncomment the line `// sendInitialConversationItem();`. The initial greeting is controlled in `sendInitialConversationItem`.
+A aplicação cria automaticamente os seguintes diretórios:
+- `/recordings` - Onde todas as gravações de chamadas são armazenadas
+- `/appointments` - Onde os dados de agendamento são salvos em formato JSON
 
-### Interrupt handling/AI preemption
-When the user speaks and OpenAI sends `input_audio_buffer.speech_started`, the code will clear the Twilio Media Streams buffer and send OpenAI `conversation.item.truncate`.
+## Executando a aplicação
 
-Depending on your application's needs, you may want to use the [`input_audio_buffer.speech_stopped`](https://platform.openai.com/docs/api-reference/realtime-server-events/input_audio_buffer/speech_stopped) event, instead.
+Com o ngrok em execução, dependências instaladas, Twilio configurado adequadamente e o arquivo `.env` configurado, execute o servidor com o seguinte comando:
+
+```
+npm start
+```
+
+ou 
+
+```
+npm run dev
+```
+
+ou
+
+```
+node dist/index.js
+```
+
+## Testando a aplicação
+
+### Para receber chamadas
+Com o servidor de desenvolvimento em execução, ligue para o número de telefone que você configurou. Após a introdução, você poderá falar com o assistente de IA que se apresentará como Carol da Estratégia Investimentos.
+
+### Para fazer chamadas de saída
+Você pode iniciar chamadas de saída fazendo uma requisição POST para a rota `/make-call`:
+
+```
+curl -X POST https://c016-2804-14c-211-436f-4fbe-c93b-d7f4-2eaa.ngrok-free.app/make-call \
+  -H "Content-Type: application/json" \
+  -d '{"to": "+5511996046537", "message": "Mensagem inicial opcional"}'
+```
+
+## Personalização
+
+### Instruções do sistema
+Para modificar o comportamento da assistente virtual, você pode editar a variável `SYSTEM_INSTRUCTIONS` no arquivo `index.ts`. Isso controla como a IA se comporta durante as chamadas.
+
+### Configuração do modelo
+Você pode ajustar a configuração do modelo OpenAI modificando a variável `MODEL_CONFIG` no arquivo `index.ts`, incluindo:
+- Modelo de linguagem (`model`)
+- Voz (`voice`)
+- Temperatura (`temperature`)
+- Limite de tokens (`max_response_output_tokens`)
+- Detecção de turnos (`turn_detection`)
+
+## Arquivos de Dados
+
+### Gravações
+As gravações de chamadas são salvas no formato WAV no diretório `/recordings`. Os nomes dos arquivos incluem data/hora e ID da chamada.
+
+### Agendamentos
+Os dados de agendamento são salvos como arquivos JSON no diretório `/appointments`. Cada arquivo contém:
+- Nome do cliente
+- Email
+- Dia preferido
+- Horário preferido
+- Número de telefone
+- Notas adicionais
+- ID da chamada
+- Timestamp

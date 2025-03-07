@@ -58,6 +58,10 @@ const recordingsDir = path.join(__dirname, "../recordings");
 fs.ensureDirSync(recordingsDir);
 console.log(`Recordings will be saved to: ${recordingsDir}`);
 
+const appointmentsDir = path.join(__dirname, "../appointments");
+fs.ensureDirSync(appointmentsDir);
+console.log(`Appointments will be saved to: ${appointmentsDir}`);
+
 // Register static file server for recordings
 fastify.register(fastifyStatic, {
   root: recordingsDir,
@@ -72,7 +76,7 @@ const twilioClient = Twilio(env.TWILIO_ACCOUNT_SID!, env.TWILIO_AUTH_TOKEN!);
 const MODEL_CONFIG: ModelConfig = {
   model: "gpt-4o-mini-realtime-preview-2024-12-17",
   voice: "shimmer",
-  temperature: 0.78,
+  temperature: 0.62,
   max_response_output_tokens: 500,
   turn_detection: {
     type: "server_vad",
@@ -83,17 +87,43 @@ const MODEL_CONFIG: ModelConfig = {
 };
 
 // Updated system instructions
-const SYSTEM_INSTRUCTIONS: string = `Your main goal is to consistently lead users to schedule a meeting with a consultant. Always aim to persuade them to book a time, even in general replies. Speak with a São Paulo business district accent, specifically from the Faria Lima area.
- # Details
- - Position yourself as Carol from Estratégia Investimentos
- - You are conducting cold calls
- - The meeting should be scheduled for next week
- # Tone and Speech
- - Speak at a fast pace to maintain engagement.
- - Use a persuasive and confident tone of voice paulista
- - Be emotionally engaging and friendly
- - Use a São Paulo business district accent, specifically from the Faria Lima area
- - Project enthusiasm and conviction in your voice`;
+const SYSTEM_INSTRUCTIONS: string = `Your main goal is to schedule a meeting with a consultant by gathering all necessary information and using the schedule_appointment tool. This is the ONLY purpose of this call.
+
+# Details
+- Position yourself as Carol from Estratégia Investimentos
+- You are conducting cold calls
+- The meeting should be scheduled for next week
+- You MUST collect the following information before ending the call:
+  1. Customer's full name (required)
+  2. Email address (required)
+  3. Preferred day for appointment (required)
+  4. Preferred time for appointment (required)
+  5. Phone number (already have from the call)
+  6. Any specific investment interests or questions (as additional notes)
+
+# Call Flow
+1. Begin with a friendly introduction as Carol from Estratégia Investimentos
+2. Explain that you're calling to schedule a free investment consultation
+3. Ask for and confirm their name
+4. Ask for their email for sending confirmation
+5. Ask which day next week works best for them
+6. Ask what time on that day works best
+7. Ask if they have any specific investment interests or questions
+8. USE THE SCHEDULE_APPOINTMENT TOOL to save their information
+9. After scheduling, confirm the appointment details and thank them
+
+# Tone and Speech
+- Speak with a São Paulo business district accent, specifically from the Faria Lima area
+- Speak at a fast pace to maintain engagement
+- Use a persuasive and confident tone of voice
+- Be emotionally engaging and friendly
+- Project enthusiasm and conviction in your voice
+
+# Reminders
+- ALWAYS use the schedule_appointment tool to save appointment details
+- Do not end the call without scheduling an appointment
+- If the person hesitates, emphasize the no-obligation nature of the consultation
+- Always try to collect ALL required information: name, email, day, and time`;
 
 const PORT: number = Number(env.PORT) || 5050; // Allow dynamic port assignment
 
@@ -263,7 +293,6 @@ fastify.register(async (fastify) => {
         type: "session.update",
         session: {
           turn_detection: MODEL_CONFIG.turn_detection,
-          // Required for Twilio Media Streams
           input_audio_format: "g711_ulaw",
           output_audio_format: "g711_ulaw",
           voice: MODEL_CONFIG.voice,
@@ -271,6 +300,41 @@ fastify.register(async (fastify) => {
           modalities: ["text", "audio"],
           temperature: MODEL_CONFIG.temperature,
           max_response_output_tokens: MODEL_CONFIG.max_response_output_tokens,
+          // Add tools property for function calling
+          tools: [
+            {
+              type: "function",
+              name: "schedule_appointment",
+              description:
+                "Schedule an appointment with a consultant for the customer",
+              parameters: {
+                type: "object",
+                properties: {
+                  customer_name: {
+                    type: "string",
+                    description: "The full name of the customer",
+                  },
+                  email: {
+                    type: "string",
+                    description:
+                      "Customer's email address for the appointment confirmation",
+                  },
+                  preferred_day: {
+                    type: "string",
+                    description:
+                      "The preferred day for the appointment, e.g. 'Monday', 'Tuesday'",
+                  },
+                  preferred_time: {
+                    type: "string",
+                    description:
+                      "The preferred time for the appointment, e.g. '10:00', '15:30'",
+                  },
+                },
+                required: ["customer_name", "preferred_day", "preferred_time"],
+              },
+            },
+          ],
+          tool_choice: "auto",
         },
       };
 
@@ -398,6 +462,91 @@ fastify.register(async (fastify) => {
 
         if (response.type === "input_audio_buffer.speech_started") {
           handleSpeechStartedEvent();
+        }
+
+        if (
+          response.type === "response.done" &&
+          response.response &&
+          response.response.output
+        ) {
+          console.log(
+            "Processing response.done event:",
+            JSON.stringify(response)
+          );
+
+          const outputItems = response.response.output;
+
+          for (const item of outputItems) {
+            if (
+              item.type === "function_call" &&
+              item.name === "schedule_appointment"
+            ) {
+              console.log(
+                "Appointment function called with arguments:",
+                item.arguments
+              );
+
+              try {
+                const args = JSON.parse(item.arguments);
+                const call_id = item.call_id;
+
+                // Save the appointment details to a file
+                const appointmentData = {
+                  customer_name: args.customer_name || "Unknown",
+                  email: args.email || "",
+                  preferred_day: args.preferred_day || "",
+                  preferred_time: args.preferred_time || "",
+                  phone_number: args.phone_number || "",
+                  additional_notes: args.additional_notes || "",
+                  call_sid: streamSid || "unknown_call",
+                  timestamp: new Date().toISOString(),
+                };
+
+                // Create a filename with timestamp
+                const filename = `${appointmentData.timestamp.replace(
+                  /[:.]/g,
+                  "-"
+                )}_${appointmentData.customer_name.replace(/\s+/g, "_")}.json`;
+                const filePath = path.join(appointmentsDir, filename);
+
+                // Write the appointment data to a file
+                fs.writeJsonSync(filePath, appointmentData, { spaces: 2 });
+                console.log(`Appointment saved to: ${filePath}`);
+
+                // Send function call result back to OpenAI
+                const functionResult = {
+                  type: "conversation.item.create",
+                  item: {
+                    type: "function_call_output",
+                    call_id: call_id,
+                    output: JSON.stringify({
+                      status: "success",
+                      message: `Appointment scheduled for ${args.customer_name} on ${args.preferred_day} at ${args.preferred_time}`,
+                      confirmation_code: `APPT-${Math.floor(
+                        100000 + Math.random() * 900000
+                      )}`,
+                    }),
+                  },
+                };
+
+                console.log(
+                  "Sending function result back to OpenAI:",
+                  JSON.stringify(functionResult)
+                );
+
+                // Send the function result back to OpenAI
+                openAiWs.send(JSON.stringify(functionResult));
+
+                // Continue the conversation by creating a new response
+                openAiWs.send(JSON.stringify({ type: "response.create" }));
+              } catch (error) {
+                console.error(
+                  "Error processing appointment function call:",
+                  error
+                );
+              }
+            }
+          }
         }
       } catch (error) {
         console.error(
